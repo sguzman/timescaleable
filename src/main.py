@@ -10,10 +10,11 @@ import datetime
 import traceback
 import queue
 import influxdb
+import asyncio
 
 
 keys = os.environ['API_KEY'].split('|')
-cores = 4
+cores = 1
 influx_queue = queue.Queue()
 chunk_size = 50
 
@@ -102,7 +103,7 @@ def get_sample(chans, weights, n):
     return [numpy.random.choice(chans, p=weights) for x in range(n)]
 
 
-def parse_request(distro):
+async def parse_request(distro):
     try:
         sample = get_sample(distro[0], distro[1], chunk_size)
         json_body, key = api_request(sample)
@@ -117,6 +118,10 @@ def parse_request(distro):
         traceback.print_exc()
 
 
+def async_wrapper(distro):
+    asyncio.run(parse_request(distro))
+
+
 def main():
     threading.Thread(target=start_influx_service, daemon=True).start()
 
@@ -125,7 +130,7 @@ def main():
 
     def func():
         while True:
-            parse_request(distro)
+            async_wrapper(distro)
 
     for i in range(cores):
         threading.Thread(target=func).start()

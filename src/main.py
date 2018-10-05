@@ -2,7 +2,6 @@ import numpy
 import requests
 import json
 import psycopg2
-import math
 import os
 import random
 import sys
@@ -11,12 +10,10 @@ import datetime
 import traceback
 import queue
 import influxdb
-from multiprocessing.dummy import Pool
 
 
 keys = os.environ['API_KEY'].split('|')
 cores = 4
-pool = Pool(cores)
 influx_queue = queue.Queue()
 chunk_size = 50
 
@@ -126,10 +123,12 @@ def main():
     chans_weight = query_channels()
     distro = weighted_distro(chans_weight)
 
-    iter = [distro] * cores
-    while True:
-        pool.map(parse_request, iter)
+    def func():
+        while True:
+            parse_request(distro)
 
+    for i in range(cores):
+        threading.Thread(target=func).start()
 
 
 if __name__ == '__main__':

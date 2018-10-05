@@ -14,7 +14,7 @@ import asyncio
 
 
 keys = os.environ['API_KEY'].split('|')
-cores = 1
+cores = 4
 influx_queue = queue.Queue()
 chunk_size = 50
 

@@ -25,9 +25,9 @@ def start_influx_service():
     client = influxdb.InfluxDBClient('localhost', 8086, 'admin', 'admin', 'youtube')
 
     while True:
-        json_single = influx_queue.get(block=True)
+        json_single, api_key = influx_queue.get(block=True)
         client.write_points(json_single)
-        print('Insert at', datetime.datetime.now(), len(json_single))
+        print('Insert at', datetime.datetime.now(), len(json_single), api_key)
 
 
 def influx_json_format(name, fields):
@@ -51,7 +51,7 @@ def api_request(chans):
 
     req = requests.get(url, params=params)
     json_body = json.loads(req.text)
-    return json_body
+    return json_body, key
 
 
 def extract_stats(json_body):
@@ -102,19 +102,19 @@ def weighted_distro(chans):
 
 
 def get_sample(chans, weights, n):
-    return [numpy.random.choice(chans, p=weights) for x in chans]
+    return [numpy.random.choice(chans, p=weights) for x in range(n)]
 
 
 def parse_request(distro):
     try:
         sample = get_sample(distro[0], distro[1], chunk_size)
-        json_body = api_request(sample)
+        json_body, key = api_request(sample)
 
         titles = extract_title(json_body)
         stats = extract_stats(json_body)
 
         body = [influx_json_format({'name': titles[i]}, stats[i]) for i in range(len(stats))]
-        influx_queue.put(body)
+        influx_queue.put((body, key))
     except Exception as e:
         print(e, file=sys.stderr)
         traceback.print_exc()

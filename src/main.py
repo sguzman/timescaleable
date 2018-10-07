@@ -9,32 +9,31 @@ import threading
 import datetime
 import traceback
 import queue
-import influxdb
 import asyncio
 
 
 keys = os.environ['API_KEY'].split('|')
-cores = 4
+cores = 1
 influx_queue = queue.Queue()
 chunk_size = 50
 
 
-def start_influx_service():
-    client = influxdb.InfluxDBClient('localhost', 8086, 'admin', 'admin', 'youtube')
+def connect(db):
+    return psycopg2.connect(user='root', password='', host='127.0.0.1', port='5432', database=db)
 
+
+def start_sql_service():
+    conn = connect('timeseries')
+
+    insert_sql = f'INSERT INTO subscriptions (channel_serial, sub) VALUES (%s, %s)'
     while True:
-        json_single, api_key = influx_queue.get(block=True)
-        client.write_points(json_single)
-        print('Insert at', datetime.datetime.now(), len(json_single), api_key)
-
-
-def influx_json_format(name, fields):
-    return {
-        'measurement': 'Channels',
-        'tags': name,
-        'time': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'fields': fields
-    }
+        subs, api_key = influx_queue.get(block=True)
+        cursor = conn.cursor()
+        for data in subs:
+            cursor.execute(insert_sql, data)
+        conn.commit()
+        cursor.close()
+        print('Insert at', datetime.datetime.now(), len(subs), api_key)
 
 
 def api_request(chans):
@@ -58,27 +57,13 @@ def extract_stats(json_body):
     stats_body = []
     for s in stats_result:
         stats_tmp = s['statistics']
-        stats_body.append({
-            'viewCount': int(stats_tmp['viewCount']),
-            'subscriberCount': int(stats_tmp['subscriberCount']),
-            'videoCount': int(stats_tmp['videoCount'])
-        })
+        stats_body.append(int(stats_tmp['subscriberCount']))
 
     return stats_body
 
 
-def extract_title(json_body):
-    items = json_body['items']
-
-    titles = []
-    for i in items:
-        titles.append(i['snippet']['title'])
-
-    return titles
-
-
 def query_channels():
-    conn = psycopg2.connect(user='root', password='', host='127.0.0.1', port='5432', database='youtube')
+    conn = connect('youtube')
     sql = f'SELECT chan_serial, subs FROM youtube.channels.chans ORDER BY subs DESC'
     cursor = conn.cursor()
     cursor.execute(sql)
@@ -108,11 +93,9 @@ async def parse_request(distro):
         sample = get_sample(distro[0], distro[1], chunk_size)
         json_body, key = api_request(sample)
 
-        titles = extract_title(json_body)
         stats = extract_stats(json_body)
 
-        body = [influx_json_format({'name': titles[i]}, stats[i]) for i in range(len(stats))]
-        influx_queue.put((body, key))
+        influx_queue.put((list(zip(sample, stats)), key))
     except Exception as e:
         print(e, file=sys.stderr)
         traceback.print_exc()
@@ -123,7 +106,7 @@ def async_wrapper(distro):
 
 
 def main():
-    threading.Thread(target=start_influx_service, daemon=True).start()
+    threading.Thread(target=start_sql_service, daemon=True).start()
 
     chans_weight = query_channels()
     distro = weighted_distro(chans_weight)
